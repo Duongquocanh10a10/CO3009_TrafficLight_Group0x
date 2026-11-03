@@ -25,7 +25,16 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "scheduler.h"
+#include "software_timer.h"
+#include "button.h"
+#include "global.h"
+#include "traffic_light.h"
+#include "dht20.h"
+#include "lcd.h"
+#include "fsm_automatic.h"
+#include "fsm_manual.h"
+#include "fsm_tuning.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,7 +44,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define TASK_TICK_10MS          1
+#define TASK_LCD_UPDATE_TICKS   25
+#define TASK_BLINK_LED_TICKS    50
+#define TASK_BOOT_ONESHOT_TICKS 150
+#define TASK_DHT20_TICKS        200
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,12 +65,51 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+__attribute__((weak)) void lcd_init(void) {}
+__attribute__((weak)) void lcd_update_task(void) {}
+__attribute__((weak)) void dht20_init(void) {}
+__attribute__((weak)) void dht20_read(void) {}
+__attribute__((weak)) void fsm_boot_complete_oneshot(void) {}
+__attribute__((weak)) void fsm_automatic_run(void) {}
+__attribute__((weak)) void fsm_manual_run(void) {}
+__attribute__((weak)) void fsm_tuning_run(void) {}
 
+static void Task_Heartbeat_LED(void);
+static void Task_System_Boot_Oneshot(void);
+static void Task_FSM_Run(void);
+static void Task_Read_DHT20(void);
+static void Task_Update_LCD(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void Task_Heartbeat_LED(void)
+{
+  HAL_GPIO_TogglePin(LED_PA5_GPIO_Port, LED_PA5_Pin);
+}
 
+static void Task_System_Boot_Oneshot(void)
+{
+  HAL_GPIO_WritePin(LED_PC9_GPIO_Port, LED_PC9_Pin, GPIO_PIN_SET);
+  fsm_boot_complete_oneshot();
+}
+
+static void Task_FSM_Run(void)
+{
+  fsm_automatic_run();
+  fsm_manual_run();
+  fsm_tuning_run();
+}
+
+static void Task_Read_DHT20(void)
+{
+  dht20_read();
+}
+
+static void Task_Update_LCD(void)
+{
+  lcd_update_task();
+}
 /* USER CODE END 0 */
 
 /**
@@ -93,13 +145,28 @@ int main(void)
   MX_TIM2_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  SCH_Init();
+  clearAllButtons();
 
+  lcd_init();
+  dht20_init();
+
+  SCH_Add_Task(button_reading, 0, TASK_TICK_10MS);
+  SCH_Add_Task(timer_run, 0, TASK_TICK_10MS);
+  SCH_Add_Task(Task_FSM_Run, 1, TASK_TICK_10MS);
+  SCH_Add_Task(Task_System_Boot_Oneshot, TASK_BOOT_ONESHOT_TICKS, 0);
+  SCH_Add_Task(Task_Read_DHT20, TASK_BOOT_ONESHOT_TICKS, TASK_DHT20_TICKS);
+  SCH_Add_Task(Task_Update_LCD, 2, TASK_LCD_UPDATE_TICKS);
+  SCH_Add_Task(Task_Heartbeat_LED, 0, TASK_BLINK_LED_TICKS);
+
+  HAL_TIM_Base_Start_IT(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    SCH_Dispatch_Tasks();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -146,7 +213,13 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM2)
+  {
+    SCH_Update();
+  }
+}
 /* USER CODE END 4 */
 
 /**
